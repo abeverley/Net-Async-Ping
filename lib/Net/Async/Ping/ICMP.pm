@@ -42,6 +42,17 @@ sub _build__pid
     $$ & 0xffff;
 }
 
+has _proto_num => (
+    is => 'lazy',
+);
+
+sub _build__proto_num
+{   my $self = shift;
+    my $proto_num = (getprotobyname('icmp'))[2] ||
+        croak("Can't get icmp protocol by name");
+    return $proto_num;
+}
+
 has seq => (
     is      => 'ro',
     default => 1,
@@ -77,18 +88,16 @@ sub ping {
     my $t0 = [Time::HiRes::gettimeofday];
 
     my $fh = IO::Socket->new;
-    my $proto_num = (getprotobyname('icmp'))[2] ||
-        croak("Can't get icmp protocol by name");
     # Let's try a ping socket (unprivileged ping) first. See
     # https://lwn.net/Articles/422330/
     my ($ping_socket, $ident);
-    if ($self->use_ping_socket && socket($fh, AF_INET, SOCK_DGRAM, $proto_num))
+    if ($self->use_ping_socket && socket($fh, AF_INET, SOCK_DGRAM, $self->_proto_num))
     {
         $ping_socket = 1;
         ($ident) = unpack_sockaddr_in getsockname($fh);
     }
     else {
-        socket($fh, AF_INET, SOCK_RAW, $proto_num) ||
+        socket($fh, AF_INET, SOCK_RAW, $self->_proto_num) ||
             croak("Unable to create ICMP socket ($!). Are you running as root?"
               ." If not, and your system supports ping sockets, try setting"
               ." /proc/sys/net/ipv4/ping_group_range");
@@ -104,7 +113,7 @@ sub ping {
 
     $loop->resolver->getaddrinfo(
        host     => $host,
-       protocol => $proto_num,
+       protocol => $self->_proto_num,
        family   => AF_INET,
     )->then( sub {
 
