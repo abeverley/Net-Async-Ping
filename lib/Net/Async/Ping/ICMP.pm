@@ -87,35 +87,35 @@ sub ping {
 
     my $t0 = [Time::HiRes::gettimeofday];
 
-    my $fh = IO::Socket->new;
-    # Let's try a ping socket (unprivileged ping) first. See
-    # https://lwn.net/Articles/422330/
-    my ($ping_socket, $ident);
-    if ($self->use_ping_socket && socket($fh, AF_INET, SOCK_DGRAM, $self->_proto_num))
-    {
-        $ping_socket = 1;
-        ($ident) = unpack_sockaddr_in getsockname($fh);
-    }
-    else {
-        socket($fh, AF_INET, SOCK_RAW, $self->_proto_num) ||
-            croak("Unable to create ICMP socket ($!). Are you running as root?"
-              ." If not, and your system supports ping sockets, try setting"
-              ." /proc/sys/net/ipv4/ping_group_range");
-        $ident = $self->_pid;
-    }
-
-    if ($self->bind)
-    {
-        my $bind = pack_sockaddr_in 0, inet_aton $self->bind;
-        bind $fh, $bind
-            or croak "Failed to bind to ".$self->bind;
-    }
-
     $loop->resolver->getaddrinfo(
        host     => $host,
        protocol => $self->_proto_num,
        family   => AF_INET,
     )->then( sub {
+
+        my $fh = IO::Socket->new;
+        # Let's try a ping socket (unprivileged ping) first. See
+        # https://lwn.net/Articles/422330/
+        my ($ping_socket, $ident);
+        if ($self->use_ping_socket && socket($fh, AF_INET, SOCK_DGRAM, $self->_proto_num))
+        {
+            $ping_socket = 1;
+            ($ident) = unpack_sockaddr_in getsockname($fh);
+        }
+        else {
+            socket($fh, AF_INET, SOCK_RAW, $self->_proto_num) ||
+                croak("Unable to create ICMP socket ($!). Are you running as root?"
+                  ." If not, and your system supports ping sockets, try setting"
+                  ." /proc/sys/net/ipv4/ping_group_range");
+            $ident = $self->_pid;
+        }
+
+        if ($self->bind)
+        {
+            my $bind = pack_sockaddr_in 0, inet_aton $self->bind;
+            bind $fh, $bind
+                or croak "Failed to bind to ".$self->bind;
+        }
 
         my $saddr = $_[0]->{addr};
         my $f     = $loop->new_future;
@@ -159,7 +159,6 @@ sub ping {
                 } elsif ($from_type == ICMP_TIME_EXCEEDED) {
                     $f->fail('ICMP Timeout');
                 }
-                $legacy ? $loop->remove($socket) : $ping->remove_child($socket);
             },
         );
 
@@ -172,7 +171,10 @@ sub ping {
            $loop->timeout_future(after => $timeout)
         )
         ->then(
-            sub { Future->done(Time::HiRes::tv_interval($t0)) }
+            sub {
+                $legacy ? $loop->remove($socket) : $self->remove_child($socket);
+                Future->done(Time::HiRes::tv_interval($t0));
+            }
         )
     });
 }
