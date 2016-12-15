@@ -3,7 +3,7 @@ $Net::Async::Ping::ICMP::VERSION = '0.001001';
 use Moo;
 use warnings NONFATAL => 'all';
 
-use Future;
+use Future 0.21; # required by else_eith_f
 use POSIX 'ECONNREFUSED';
 use Time::HiRes;
 use Carp;
@@ -159,6 +159,8 @@ sub ping {
                 } elsif ($from_type == ICMP_TIME_EXCEEDED) {
                     $f->fail('ICMP Timeout');
                 }
+                # Remove now, otherwise future not finished with ICMP unreachable
+                $legacy ? $loop->remove($socket) : $ping->remove_child($socket);
             },
         );
 
@@ -167,12 +169,16 @@ sub ping {
         $socket->send( $self->_msg($ident), ICMP_FLAGS, $saddr );
 
         Future->wait_any(
-           $f,
-           $loop->timeout_future(after => $timeout)
+            $f,
+            $loop->timeout_future(after => $timeout)->else_with_f( sub {
+                # Remove socket
+                $legacy ? $loop->remove($socket) : $self->remove_child($socket);
+                # Then return original timeout future
+                $_[0];
+            })
         )
         ->then(
             sub {
-                $legacy ? $loop->remove($socket) : $self->remove_child($socket);
                 Future->done(Time::HiRes::tv_interval($t0));
             }
         )
